@@ -1,0 +1,124 @@
+---
+title: "Machine Learning Project"
+author: "Jagadeesha"
+date: "Sep 2, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Libraries
+```{r, message=FALSE}
+suppressMessages(library(caret))
+suppressMessages(library(rattle))
+suppressMessages(library(rpart))
+suppressMessages(library(rpart.plot))
+suppressMessages(library(RColorBrewer))
+suppressMessages(library(randomForest))
+suppressMessages(library(corrplot))
+```
+
+## Data loading
+First, we load the data from provided url. If the file is already downloaded and stored in the local machine, then the downloaded file will be used instead of downloading the files again.
+```{r}
+wd <- getwd()
+trainingFile <- paste0(wd,"/pml-training.csv")
+testingFile <-  paste0(wd,"/pml-testing.csv")
+
+if(!file.exists(trainingFile) | !file.exists(testingFile)) {
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                destfile="pml-training.csv",method="libcurl")
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                destfile="pml-testing.csv",method="libcurl")
+}
+trainDataComplete <- read.csv(trainingFile, na.strings=c("NA","#DIV/0!",""), header=TRUE)
+testDataComplete <- read.csv(testingFile,  na.strings=c("NA","#DIV/0!",""), header = TRUE)
+
+dim(trainDataComplete)
+dim(testDataComplete)
+
+```
+  The training dataset contains 19622 observations of 160 variables. The test dataset contains 20 observations of 160 variables.
+  
+##  Cleaning the data
+  The first 7 columns of the dataset contain the information about the users and the timestamp. Since we are not interested in these information, we can ignore those 7 columns.
+```{r}
+trainData <- trainDataComplete[,-c(1:7)]
+```
+  The near zero variance variables can be removed using nearZeroVar function. There are plenty of columns with missing values. So we ignore the columns which have more than 80% of missing values.
+```{r}
+nzv <- nearZeroVar(trainData)
+trainData <- trainData[, -nzv]
+n <- dim(trainData)[1]
+naLimit <- n * 0.8
+colSum <- colSums(is.na(trainData)|trainData=="")
+colsToRemove <- which(colSum > naLimit)
+trainData <- trainData[,-(colsToRemove)]
+
+dim(trainData)
+
+```  
+##  Partition the training set into training and testing.
+```{r}
+set.seed(3344)
+inTrainData <- createDataPartition(trainData$classe, p=0.6, list=FALSE)
+training <- trainData[inTrainData, ]
+testing <- trainData[-inTrainData, ]
+```
+
+## Prediction with decision trees 
+  We use the decision trees algorithm for prediction on the `training` dataset. We use trainControl method to set the cross validation of the model. 
+```{r}
+#Decision Trees
+set.seed(3344)
+tc <- trainControl(method="cv", number=5)
+dtModel <- train(classe ~ ., method = "rpart", data = training, trControl = tc)
+fancyRpartPlot(dtModel$finalModel, main="Prediction with decision trees", sub="")
+tPredict <- predict(dtModel,testing)
+dtConfMatrix <- confusionMatrix(tPredict,testing$classe)
+# display confusion matrix and model accuracy
+dtConfMatrix$table
+dtConfMatrix$overall[1]
+```
+  As shown above, the accuracy of the model (0.4940097) is very low. We can tune the model to have better accuracy by using tuneLength or tuneGrid (by setting complexity parameter) properties. But since that is out of scope of this write up, we will explore other methods.
+
+## Gradient boosting method
+  In this method, we change the method to `gbm`. 
+```{r}
+set.seed(3344)
+gbModel <- train(classe ~ ., method = "gbm", data = training, trControl = tc, verbose= FALSE )
+plot(gbModel)
+tPredict <- predict(gbModel,newdata=testing)
+gbConfMatrix <- confusionMatrix(tPredict,testing$classe)
+gbConfMatrix$table
+gbConfMatrix$overall[1]
+```
+  This model has better accuracy(0.9574305) than the prediction model with decision trees. But still, the expected out of sample error (100-0.9574305 = 4.25695) is high.
+##Random Forest
+  
+```{r}
+set.seed(3344)
+rfModel <- train(classe~., method="rf", data=training, trControl=tc, verbose=FALSE)
+plot(rfModel,main="Accuracy of Random forest model by number of predictors")
+tPredict <- predict(rfModel,newdata=testing)
+rfConfMatrix <- confusionMatrix(tPredict,testing$classe)
+rfConfMatrix$table
+rfConfMatrix$overall[1]
+```
+  The accuracy of random forest model is 0.9927352, which indicates that the random forest model is better than decision trees and fradient boosting models. The expected out of sample error is 0.72648%. 
+
+##Model selection
+  The random forest model had better accuracy than the decision tree and gradient boosting models. So we will apply the random forest model on the test dataset.
+```{r}
+finalTest <- predict(rfModel,newdata=testDataComplete)
+finalTest
+```
+
+## Conclusion
+  Data cleaning process ensured most of the non zero variance values are ignored in the prediction models. Using random forest model, we are able to fit a reasonably good prediction model with high accuracy. The selected model is then applied on the test dataset. The model can be tuned to have more accuracy by using tuneLength or tuneGrid properties.
